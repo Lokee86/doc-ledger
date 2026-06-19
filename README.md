@@ -20,6 +20,29 @@ The result is a file tree that can be moved, split, expanded, or reorganized wit
 
 It preserves hand-authored content outside managed index blocks.
 
+## Installation
+
+Install the latest tagged release from GitHub:
+
+```bash
+python3 -m pip install "doc-ledger @ git+https://github.com/Lokee86/doc-ledger.git@v0.1.0"
+```
+
+Install from a cloned checkout for development:
+
+```bash
+git clone https://github.com/Lokee86/doc-ledger.git
+cd doc-ledger
+python3 -m pip install -e ".[dev]"
+```
+
+After installation:
+
+```bash
+doc-ledger --help
+doc-ledger --version
+```
+
 ## Quick start
 
 From the `doc-ledger` repo:
