@@ -20,18 +20,18 @@ def test_fix_accepts_root(tmp_path: Path) -> None:
 
 def test_fix_reports_summary(tmp_path: Path, capsys) -> None:
     readme_path = tmp_path / "!README.md"
-    marker_block = "<!-- docs-index:files:start -->\n<!-- docs-index:files:end -->"
+    marker_block = "<!-- doc-ledger:files:start -->\n<!-- doc-ledger:files:end -->"
     readme_text = make_readme_template(tmp_path, tmp_path, None).replace(
         marker_block,
-        "<!-- docs-index:files:start -->\n\n- [ghost.md](ghost.md) - Ghost documentation.\n\n<!-- docs-index:files:end -->",
+        "<!-- doc-ledger:files:start -->\n\n- [ghost.md](ghost.md) - Ghost documentation.\n\n<!-- doc-ledger:files:end -->",
     )
     readme_path.write_text(readme_text, encoding="utf-8")
 
     assert cli.main(["fix", "--root", str(tmp_path)]) == 0
 
     output = capsys.readouterr().out
-    assert "docs-index fix updated 1 file(s)" in output
-    assert "docs-index fix reconciliation messages: 1" in output
+    assert "doc-ledger fix updated 1 file(s)" in output
+    assert "doc-ledger fix reconciliation messages: 1" in output
 
 
 def test_check_accepts_root(tmp_path: Path, capsys) -> None:
@@ -42,7 +42,7 @@ def test_check_accepts_root(tmp_path: Path, capsys) -> None:
 
     assert cli.main(["check", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
-    assert output.strip() == "docs-index check passed"
+    assert output.strip() == "doc-ledger check passed"
 
 
 def test_check_reports_failure_output(tmp_path: Path, capsys) -> None:
@@ -50,7 +50,7 @@ def test_check_reports_failure_output(tmp_path: Path, capsys) -> None:
 
     assert cli.main(["check", "--root", str(tmp_path)]) == 1
     output = capsys.readouterr().out
-    assert "docs-index check failed" in output
+    assert "doc-ledger check failed" in output
     assert str(tmp_path / "!README.md") in output
 
 

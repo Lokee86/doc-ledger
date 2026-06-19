@@ -1,1 +1,1 @@
-"""docs-index package."""
+"""doc-ledger package."""

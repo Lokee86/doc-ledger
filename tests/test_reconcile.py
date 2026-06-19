@@ -56,6 +56,128 @@ def test_reconcile_tree_plans_missing_child_readme(tmp_path: Path) -> None:
     assert "Parent index: [Docs](../!README.md)" in child_update.new_text
 
 
+def test_reconcile_tree_keeps_existing_child_title_for_root_parent_display(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "!README.md").write_text("# Documentation\n", encoding="utf-8")
+    (root / "alpha.md").write_text("Parent index: [Docs](./!README.md)\n\nAlpha body\n", encoding="utf-8")
+    guide = root / "guide"
+    guide.mkdir()
+
+    result = reconcile_tree(root)
+
+    guide_update = next(update for update in result.updates if update.path == guide / "!README.md")
+    assert "Parent index: [Docs](../!README.md)" in guide_update.new_text
+    assert "Parent index: [Documentation](../!README.md)" not in guide_update.new_text
+
+
+def test_reconcile_tree_uses_root_heading_when_no_child_parent_titles_exist(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "!README.md").write_text("# Documentation\n", encoding="utf-8")
+    guide = root / "guide"
+    guide.mkdir()
+
+    result = reconcile_tree(root)
+
+    guide_update = next(update for update in result.updates if update.path == guide / "!README.md")
+    assert "Parent index: [Documentation](../!README.md)" in guide_update.new_text
+
+
+def test_reconcile_tree_migrates_root_top_level_sections(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "alpha.md").write_text("Alpha body\n", encoding="utf-8")
+    guide = root / "guide"
+    guide.mkdir()
+    (guide / "!README.md").write_text("# Guide\n", encoding="utf-8")
+    (root / "!README.md").write_text(
+        """# Docs
+
+## Top-Level Files
+<!-- doc-ledger:files:start -->
+- [alpha.md](alpha.md) - Custom alpha description.
+<!-- doc-ledger:files:end -->
+
+## Rulebook
+Keep this rulebook.
+
+## Top-Level Folders
+<!-- doc-ledger:folders:start -->
+- [Guide](guide/!README.md) - Custom guide description.
+<!-- doc-ledger:folders:end -->
+
+## Related Docs
+Still here.
+
+## Notes
+More notes.
+""",
+        encoding="utf-8",
+    )
+
+    result = reconcile_tree(root)
+    updates_by_path = {update.path: update for update in result.updates}
+    root_update = updates_by_path[root / "!README.md"]
+
+    assert "## Top-Level Files" not in root_update.new_text
+    assert "## Top-Level Folders" not in root_update.new_text
+    assert "## Direct Files" in root_update.new_text
+    assert "## Direct Folders" in root_update.new_text
+    assert "- [alpha.md](alpha.md) - Custom alpha description." in root_update.new_text
+    assert "- [Guide](guide/!README.md) - Custom guide description." in root_update.new_text
+    assert "## Rulebook" in root_update.new_text
+    assert "## Related Docs" in root_update.new_text
+    assert "## Notes" in root_update.new_text
+
+
+def test_reconcile_tree_adds_only_missing_stub_section_for_top_level_migration(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "alpha.md").write_text("Alpha body\n", encoding="utf-8")
+    guide = root / "guide"
+    guide.mkdir()
+    (guide / "!README.md").write_text("# Guide\n", encoding="utf-8")
+    (root / "!README.md").write_text(
+        """# Docs
+
+## Top-Level Files
+<!-- doc-ledger:files:start -->
+- [alpha.md](alpha.md) - Custom alpha description.
+<!-- doc-ledger:files:end -->
+
+## Rulebook
+Keep this rulebook.
+
+## Top-Level Folders
+<!-- doc-ledger:folders:start -->
+- [Guide](guide/!README.md) - Custom guide description.
+<!-- doc-ledger:folders:end -->
+
+## Related Docs
+Still here.
+
+## Notes
+More notes.
+""",
+        encoding="utf-8",
+    )
+
+    result = reconcile_tree(root)
+    root_update = next(update for update in result.updates if update.path == root / "!README.md")
+
+    assert root_update.new_text.count("## Direct Files") == 1
+    assert root_update.new_text.count("## Stub Files") == 1
+    assert root_update.new_text.count("## Direct Folders") == 1
+    assert "## Top-Level Files" not in root_update.new_text
+    assert "## Top-Level Folders" not in root_update.new_text
+    assert "- [alpha.md](alpha.md) - Custom alpha description." in root_update.new_text
+    assert "- [Guide](guide/!README.md) - Custom guide description." in root_update.new_text
+    assert "## Rulebook" in root_update.new_text
+    assert "## Related Docs" in root_update.new_text
+    assert "## Notes" in root_update.new_text
+
+
 def test_reconcile_tree_skips_stubs_readme(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     root.mkdir()
@@ -65,6 +187,23 @@ def test_reconcile_tree_skips_stubs_readme(tmp_path: Path) -> None:
     result = reconcile_tree(root)
 
     assert all(update.path != stubs / "!README.md" for update in result.updates)
+
+
+def test_reconcile_tree_plans_stub_file_update_once(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "!README.md").write_text("# Docs\n", encoding="utf-8")
+
+    stubs = root / "stubs"
+    stubs.mkdir()
+    example = stubs / "example.md"
+    example.write_text("Example body\n", encoding="utf-8")
+
+    result = reconcile_tree(root)
+    example_updates = [update for update in result.updates if update.path == example]
+
+    assert len(example_updates) == 1
+    assert "Parent index: [Docs](../!README.md)" in example_updates[0].new_text
 
 
 def test_reconcile_tree_updates_parent_indexes_for_markdown_files(tmp_path: Path) -> None:
@@ -114,7 +253,7 @@ def test_reconcile_tree_populates_managed_sections(tmp_path: Path) -> None:
 
     child_readme = child / "!README.md"
     child_readme.write_text(
-        "# Guide\n\n## Direct Files\n<!-- docs-index:files:start -->\n<!-- docs-index:files:end -->\n\n## Stub Files\n<!-- docs-index:stubs:start -->\n<!-- docs-index:stubs:end -->\n\n## Direct Folders\n<!-- docs-index:folders:start -->\n<!-- docs-index:folders:end -->\n",
+        "# Guide\n\n## Direct Files\n<!-- doc-ledger:files:start -->\n<!-- doc-ledger:files:end -->\n\n## Stub Files\n<!-- doc-ledger:stubs:start -->\n<!-- doc-ledger:stubs:end -->\n\n## Direct Folders\n<!-- doc-ledger:folders:start -->\n<!-- doc-ledger:folders:end -->\n",
         encoding="utf-8",
     )
 
@@ -124,9 +263,9 @@ def test_reconcile_tree_populates_managed_sections(tmp_path: Path) -> None:
     assert "- [alpha.md](alpha.md) - Alpha documentation." in updates_by_path[root / "!README.md"].new_text
     assert "- [stub.md](stubs/stub.md) - Stub: Stub documentation." in updates_by_path[root / "!README.md"].new_text
     assert "- [guide](guide/!README.md) - Guide documentation." in updates_by_path[root / "!README.md"].new_text
-    assert "docs-index:files:start" in updates_by_path[child_readme].new_text
-    assert "docs-index:stubs:start" in updates_by_path[child_readme].new_text
-    assert "docs-index:folders:start" in updates_by_path[child_readme].new_text
+    assert "doc-ledger:files:start" in updates_by_path[child_readme].new_text
+    assert "doc-ledger:stubs:start" in updates_by_path[child_readme].new_text
+    assert "doc-ledger:folders:start" in updates_by_path[child_readme].new_text
 
 
 def test_fix_preserves_existing_direct_file_description(tmp_path: Path) -> None:
@@ -137,17 +276,17 @@ def test_fix_preserves_existing_direct_file_description(tmp_path: Path) -> None:
         """# Docs
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [alpha.md](alpha.md) - Custom alpha description.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -167,17 +306,17 @@ def test_reconcile_tree_promotes_stub_description_when_file_graduates(tmp_path: 
         """# Docs
 
 ## Direct Files
-<!-- docs-index:files:start -->
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:start -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
+<!-- doc-ledger:stubs:start -->
 - [foo.md](stubs/foo.md) - Stub: lower-case promoted description.
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -199,17 +338,17 @@ def test_reconcile_tree_preserves_description_when_file_moves_into_stubs(tmp_pat
         """# Docs
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [foo.md](foo.md) - Custom foo description.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -231,17 +370,17 @@ def test_reconcile_tree_preserves_description_when_file_moves_across_folders(tmp
         """# Alpha
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [foo.md](foo.md) - Custom alpha description.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -259,6 +398,50 @@ def test_reconcile_tree_preserves_description_when_file_moves_across_folders(tmp
     assert "Alpha documentation." not in beta_update.new_text
 
 
+def test_reconcile_tree_does_not_reuse_stale_description_for_ambiguous_file_moves(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+
+    alpha = root / "alpha"
+    alpha.mkdir()
+    (alpha / "!README.md").write_text(
+        """# Alpha
+
+## Direct Files
+<!-- doc-ledger:files:start -->
+- [foo.md](foo.md) - Custom alpha description.
+<!-- doc-ledger:files:end -->
+
+## Stub Files
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
+
+## Direct Folders
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
+""",
+        encoding="utf-8",
+    )
+
+    beta = root / "beta"
+    beta.mkdir()
+    (beta / "foo.md").write_text("Foo body\n", encoding="utf-8")
+
+    gamma = root / "gamma"
+    gamma.mkdir()
+    (gamma / "foo.md").write_text("Foo body\n", encoding="utf-8")
+
+    (root / "!README.md").write_text("# Docs\n", encoding="utf-8")
+
+    result = reconcile_tree(root)
+    updates_by_path = {update.path: update for update in result.updates}
+
+    assert "- [foo.md](foo.md) - Foo documentation." in updates_by_path[beta / "!README.md"].new_text
+    assert "- [foo.md](foo.md) - Foo documentation." in updates_by_path[gamma / "!README.md"].new_text
+    assert "Custom alpha description." not in updates_by_path[beta / "!README.md"].new_text
+    assert "Custom alpha description." not in updates_by_path[gamma / "!README.md"].new_text
+
+
 def test_reconcile_tree_uses_generated_fallback_when_same_filename_is_ambiguous(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     root.mkdir()
@@ -269,17 +452,17 @@ def test_reconcile_tree_uses_generated_fallback_when_same_filename_is_ambiguous(
         """# Alpha
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [foo.md](foo.md) - Custom alpha description.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -290,17 +473,17 @@ def test_reconcile_tree_uses_generated_fallback_when_same_filename_is_ambiguous(
         """# Beta
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [foo.md](foo.md) - Custom beta description.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:start -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -328,17 +511,17 @@ def test_reconcile_tree_preserves_description_when_folder_moves_across_folders(t
         """# Alpha
 
 ## Direct Files
-<!-- docs-index:files:start -->
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:start -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
+<!-- doc-ledger:folders:start -->
 - [Guide](guide/!README.md) - Custom guide description.
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -357,6 +540,52 @@ def test_reconcile_tree_preserves_description_when_folder_moves_across_folders(t
     assert "Guide documentation." not in beta_update.new_text
 
 
+def test_reconcile_tree_does_not_reuse_stale_description_for_ambiguous_folder_moves(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+
+    alpha = root / "alpha"
+    alpha.mkdir()
+    (alpha / "!README.md").write_text(
+        """# Alpha
+
+## Direct Files
+<!-- doc-ledger:files:start -->
+<!-- doc-ledger:files:end -->
+
+## Stub Files
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
+
+## Direct Folders
+<!-- doc-ledger:folders:start -->
+- [Guide](guide/!README.md) - Custom alpha guide description.
+<!-- doc-ledger:folders:end -->
+""",
+        encoding="utf-8",
+    )
+
+    beta = root / "beta"
+    beta.mkdir()
+    (beta / "guide").mkdir()
+    (beta / "guide" / "!README.md").write_text("# Guide\n", encoding="utf-8")
+
+    gamma = root / "gamma"
+    gamma.mkdir()
+    (gamma / "guide").mkdir()
+    (gamma / "guide" / "!README.md").write_text("# Guide\n", encoding="utf-8")
+
+    (root / "!README.md").write_text("# Docs\n", encoding="utf-8")
+
+    result = reconcile_tree(root)
+    updates_by_path = {update.path: update for update in result.updates}
+
+    assert "- [guide](guide/!README.md) - Guide documentation." in updates_by_path[beta / "!README.md"].new_text
+    assert "- [guide](guide/!README.md) - Guide documentation." in updates_by_path[gamma / "!README.md"].new_text
+    assert "Custom alpha guide description." not in updates_by_path[beta / "!README.md"].new_text
+    assert "Custom alpha guide description." not in updates_by_path[gamma / "!README.md"].new_text
+
+
 def test_reconcile_tree_uses_generated_fallback_when_folder_name_is_ambiguous(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     root.mkdir()
@@ -367,17 +596,17 @@ def test_reconcile_tree_uses_generated_fallback_when_folder_name_is_ambiguous(tm
         """# Alpha
 
 ## Direct Files
-<!-- docs-index:files:start -->
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:start -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
+<!-- doc-ledger:folders:start -->
 - [Guide](guide/!README.md) - Custom alpha guide description.
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -388,17 +617,17 @@ def test_reconcile_tree_uses_generated_fallback_when_folder_name_is_ambiguous(tm
         """# Beta
 
 ## Direct Files
-<!-- docs-index:files:start -->
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:start -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:start -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
+<!-- doc-ledger:folders:start -->
 - [Guide](guide/!README.md) - Custom beta guide description.
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:end -->
 """,
         encoding="utf-8",
     )
@@ -441,19 +670,19 @@ def test_reconcile_tree_removes_stale_managed_entries(tmp_path: Path) -> None:
         """# Docs
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [gone.md](gone.md) - Gone direct doc.
-<!-- docs-index:files:end -->
+<!-- doc-ledger:files:end -->
 
 ## Stub Files
-<!-- docs-index:stubs:start -->
+<!-- doc-ledger:stubs:start -->
 - [stale.md](stubs/stale.md) - Stub: Gone stub doc.
-<!-- docs-index:stubs:end -->
+<!-- doc-ledger:stubs:end -->
 
 ## Direct Folders
-<!-- docs-index:folders:start -->
+<!-- doc-ledger:folders:start -->
 - [Gone](gone/!README.md) - Gone folder docs.
-<!-- docs-index:folders:end -->
+<!-- doc-ledger:folders:end -->
 
 ## Notes
 
@@ -487,7 +716,7 @@ def test_reconcile_tree_repairs_missing_end_marker(tmp_path: Path) -> None:
         """# Docs
 
 ## Direct Files
-<!-- docs-index:files:start -->
+<!-- doc-ledger:files:start -->
 - [alpha.md](alpha.md) - Custom alpha description.
 
 ## Notes
@@ -502,7 +731,7 @@ Keep this note.
     assert len(result.updates) == 1
     assert apply_updates(result) == 1
     rewritten = readme.read_text(encoding="utf-8")
-    assert "<!-- docs-index:files:end -->" in rewritten
+    assert "<!-- doc-ledger:files:end -->" in rewritten
     assert "Custom alpha description." in rewritten
     assert "Keep this note." in rewritten
 

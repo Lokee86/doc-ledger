@@ -13,16 +13,21 @@ SECTION_TITLES = {
     "folders": "## Direct Folders",
 }
 
+LEGACY_SECTION_TITLES = {
+    "files": "## Top-Level Files",
+    "folders": "## Top-Level Folders",
+}
+
 MARKER_START = {
-    "files": "<!-- docs-index:files:start -->",
-    "stubs": "<!-- docs-index:stubs:start -->",
-    "folders": "<!-- docs-index:folders:start -->",
+    "files": "<!-- doc-ledger:files:start -->",
+    "stubs": "<!-- doc-ledger:stubs:start -->",
+    "folders": "<!-- doc-ledger:folders:start -->",
 }
 
 MARKER_END = {
-    "files": "<!-- docs-index:files:end -->",
-    "stubs": "<!-- docs-index:stubs:end -->",
-    "folders": "<!-- docs-index:folders:end -->",
+    "files": "<!-- doc-ledger:files:end -->",
+    "stubs": "<!-- doc-ledger:stubs:end -->",
+    "folders": "<!-- doc-ledger:folders:end -->",
 }
 
 ENTRY_PATTERN = re.compile(r"^\s*-\s+\[([^\]]+)\]\(([^)]+)\)\s+-\s+(.*)$")
@@ -30,36 +35,30 @@ HEADING_PATTERN = re.compile(r"^#{1,6}\s+")
 
 
 def ensure_managed_sections(text: str) -> str:
-    if _has_all_managed_sections(text):
-        return text
+    legacy_present = _has_legacy_managed_sections(text)
 
-    if _has_legacy_managed_sections(text) and not _has_any_managed_markers(text):
+    if legacy_present and not _has_any_managed_markers(text):
         return _wrap_legacy_managed_sections(text)
 
-    section_block = "\n\n".join(
-        (
-            "## Direct Files",
-            MARKER_START["files"],
-            MARKER_END["files"],
-            "## Stub Files",
-            MARKER_START["stubs"],
-            MARKER_END["stubs"],
-            "## Direct Folders",
-            MARKER_START["folders"],
-            MARKER_END["folders"],
-        )
-    )
+    if legacy_present:
+        text = _normalize_legacy_heading_lines(text)
+
+    missing_sections = [section for section in MANAGED_SECTION_NAMES if not _has_managed_section(text, section)]
+    if not missing_sections:
+        return text
 
     anchor = _find_anchor(text)
+    missing_block = _render_missing_sections(missing_sections)
+
     if anchor is None:
         if text:
-            return f"{text}\n\n{section_block}"
-        return section_block
+            return f"{text}\n\n{missing_block}"
+        return missing_block
 
     before, after = text[:anchor], text[anchor:]
     if before and not before.endswith("\n\n"):
         before = before.rstrip("\n") + "\n\n"
-    return f"{before}{section_block}\n\n{after.lstrip()}"
+    return f"{before}{missing_block}\n\n{after.lstrip()}"
 
 
 def replace_managed_block(text: str, section: str, lines: list[str]) -> str:
@@ -125,6 +124,23 @@ def folder_title(folder: Path, readme_text: str | None = None) -> str:
         heading = first_heading_title(readme_text)
         if heading is not None:
             return heading
+    return title_from_folder(folder)
+
+
+def managed_root_title(folder: Path, readme_text: str | None = None, child_parent_titles: list[str] | None = None) -> str:
+    unique_child_titles: list[str] = []
+    for title in child_parent_titles or []:
+        if title and title not in unique_child_titles:
+            unique_child_titles.append(title)
+
+    if len(unique_child_titles) == 1:
+        return unique_child_titles[0]
+
+    if readme_text is not None:
+        heading = first_heading_title(readme_text)
+        if heading is not None:
+            return heading
+
     return title_from_folder(folder)
 
 
@@ -225,13 +241,30 @@ def parse_managed_entries(readme_path: Path, text: str) -> list[IndexEntry]:
 
 def _has_all_managed_sections(text: str) -> bool:
     return all(
-        MARKER_START[name] in text and MARKER_END[name] in text
+        _has_managed_section(text, name)
         for name in MANAGED_SECTION_NAMES
     )
 
 
 def _has_any_managed_markers(text: str) -> bool:
     return any(marker in text for marker in MARKER_START.values()) or any(marker in text for marker in MARKER_END.values())
+
+
+def _has_managed_section(text: str, section: str) -> bool:
+    return MARKER_START[section] in text and MARKER_END[section] in text or SECTION_TITLES[section] in text
+
+
+def _render_missing_sections(missing_sections: list[str]) -> str:
+    parts: list[str] = []
+    for section in missing_sections:
+        parts.extend(
+            [
+                SECTION_TITLES[section],
+                MARKER_START[section],
+                MARKER_END[section],
+            ]
+        )
+    return "\n\n".join(parts)
 
 
 def _has_legacy_managed_sections(text: str) -> bool:
@@ -259,6 +292,9 @@ def _section_from_heading_line(line: str) -> str | None:
     for section, heading in SECTION_TITLES.items():
         if line == heading:
             return section
+    for section, heading in LEGACY_SECTION_TITLES.items():
+        if line == heading:
+            return section
     return None
 
 
@@ -279,7 +315,7 @@ def _wrap_legacy_managed_sections(text: str) -> str:
             index += 1
             continue
 
-        output.append(line)
+        output.append(SECTION_TITLES[section])
         index += 1
         body: list[str] = []
         while index < len(lines) and not _is_any_heading_line(lines[index]):
@@ -293,6 +329,17 @@ def _wrap_legacy_managed_sections(text: str) -> str:
         output.append(MARKER_END[section])
 
     return "\n".join(output)
+
+
+def _normalize_legacy_heading_lines(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        section = _section_from_heading_line(line)
+        if section in SECTION_TITLES and line in LEGACY_SECTION_TITLES.values():
+            lines.append(SECTION_TITLES[section])
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _find_managed_section_end(text: str, start: int, section: str) -> int:

@@ -10,11 +10,14 @@ from docs_index.readme_io import description_from_folder
 from docs_index.readme_io import ensure_managed_sections
 from docs_index.readme_io import folder_title
 from docs_index.readme_io import make_readme_template
+from docs_index.readme_io import managed_root_title
 from docs_index.readme_io import parse_managed_entries
 from docs_index.readme_io import render_file_entry
 from docs_index.readme_io import render_folder_entry
 from docs_index.readme_io import replace_managed_block
 from docs_index.scan import scan_docs_tree
+
+PARENT_INDEX_PATTERN = r"^Parent index:\s+\[([^\]]+)\]\(([^)]+)\)\s*$"
 
 
 def reconcile_tree(root: Path) -> ReconcileResult:
@@ -24,30 +27,49 @@ def reconcile_tree(root: Path) -> ReconcileResult:
     existing_entries_by_folder: dict[Path, list[IndexEntry]] = {}
     cross_folder_entries_by_name: dict[str, list[IndexEntry]] = {}
     cross_folder_folder_entries_by_name: dict[str, list[IndexEntry]] = {}
+    current_unmatched_file_counts_by_name: dict[str, int] = {}
+    current_unmatched_folder_counts_by_name: dict[str, int] = {}
     updates: list[FileUpdate] = []
 
     for folder in folders:
-        if folder.readme_path is None:
+        if folder.readme_path is None or not folder.readme_path.exists():
             continue
 
-        if folder.readme_path.exists():
-            current_text = folder.readme_path.read_text(encoding="utf-8")
-            readme_text_by_folder[folder.path] = current_text
-            existing_entries_by_folder[folder.path] = parse_managed_entries(folder.readme_path, current_text)
+        current_text = folder.readme_path.read_text(encoding="utf-8")
+        readme_text_by_folder[folder.path] = current_text
+        existing_entries_by_folder[folder.path] = parse_managed_entries(folder.readme_path, current_text)
+
+    root_child_parent_titles = _root_child_parent_titles(tree.root, folders, readme_text_by_folder)
+    root_display_title = managed_root_title(
+        tree.root,
+        readme_text_by_folder.get(tree.root),
+        root_child_parent_titles,
+    )
+
+    title_lookup = _title_lookup(readme_text_by_folder, tree.root, root_display_title)
+
+    for folder in folders:
+        if folder.readme_path is None or folder.readme_path.exists():
             continue
 
         parent_title = None
         if folder.path != tree.root:
-            parent_title = folder_title(folder.path.parent, readme_text_by_folder.get(folder.path.parent))
+            parent_title = title_lookup(folder.path.parent)
 
         planned_text = make_readme_template(folder.path, tree.root, parent_title)
         readme_text_by_folder[folder.path] = planned_text
-
-    title_lookup = _title_lookup(readme_text_by_folder)
     cross_folder_entries_by_name = _cross_folder_entries_by_name(
         existing_entries_by_folder,
     )
     cross_folder_folder_entries_by_name = _cross_folder_folder_entries_by_name(
+        existing_entries_by_folder,
+    )
+    current_unmatched_file_counts_by_name = _current_unmatched_file_counts_by_name(
+        folders,
+        existing_entries_by_folder,
+    )
+    current_unmatched_folder_counts_by_name = _current_unmatched_folder_counts_by_name(
+        folders,
         existing_entries_by_folder,
     )
     matched_entry_ids: set[int] = set()
@@ -62,7 +84,9 @@ def reconcile_tree(root: Path) -> ReconcileResult:
                 update_parent_index_line(current_text, desired_line),
                 existing_entries_by_folder.get(folder.path, []),
                 cross_folder_entries_by_name,
+                current_unmatched_file_counts_by_name,
                 cross_folder_folder_entries_by_name,
+                current_unmatched_folder_counts_by_name,
                 matched_entry_ids,
             )
             if not folder.readme_path.exists() or new_text != current_text:
@@ -73,6 +97,9 @@ def reconcile_tree(root: Path) -> ReconcileResult:
                         new_text=new_text,
                     )
                 )
+
+        if folder.is_stubs:
+            continue
 
         for markdown_path in folder.direct_markdown_files + folder.stub_markdown_files:
             current_text = markdown_path.read_text(encoding="utf-8")
@@ -104,8 +131,10 @@ def apply_updates(result: ReconcileResult) -> int:
     return changed
 
 
-def _title_lookup(readme_text_by_folder: dict[Path, str]):
+def _title_lookup(readme_text_by_folder: dict[Path, str], root: Path, root_display_title: str):
     def lookup(folder: Path) -> str:
+        if folder == root:
+            return root_display_title
         readme_text = readme_text_by_folder.get(folder)
         if readme_text is not None:
             return folder_title(folder, readme_text)
@@ -114,13 +143,50 @@ def _title_lookup(readme_text_by_folder: dict[Path, str]):
     return lookup
 
 
+def _root_child_parent_titles(
+    root: Path,
+    folders: list[FolderInfo],
+    readme_text_by_folder: dict[Path, str],
+) -> list[str]:
+    titles: list[str] = []
+    root_readme = root / "!README.md"
+
+    for folder in folders:
+        if folder.readme_path is not None and folder.readme_path.exists():
+            text = readme_text_by_folder.get(folder.path)
+            if text is not None:
+                title = _parent_index_title_for_root(folder.readme_path, text, root_readme)
+                if title is not None:
+                    titles.append(title)
+
+        for markdown_path in folder.direct_markdown_files + folder.stub_markdown_files:
+            text = markdown_path.read_text(encoding="utf-8")
+            title = _parent_index_title_for_root(markdown_path, text, root_readme)
+            if title is not None:
+                titles.append(title)
+
+    return titles
+
+
+def _parent_index_title_for_root(file_path: Path, text: str, root_readme: Path) -> str | None:
+    for line in text.splitlines():
+        title, target = _parent_index_line_parts(line)
+        if title is None or target is None:
+            continue
+        if (file_path.parent / target).resolve(strict=False) == root_readme.resolve(strict=False):
+            return title
+    return None
+
+
 def _update_managed_sections(
     folder: FolderInfo,
     readme_path: Path,
     readme_text: str,
     existing_entries: list[IndexEntry],
     cross_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_file_counts_by_name: dict[str, int],
     cross_folder_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_folder_counts_by_name: dict[str, int],
     matched_entry_ids: set[int],
 ) -> str:
     ensured = ensure_managed_sections(readme_text)
@@ -134,6 +200,7 @@ def _update_managed_sections(
             existing_by_section_and_target,
             existing_entries,
             cross_folder_entries_by_name,
+            current_unmatched_file_counts_by_name,
             matched_entry_ids,
         )
         for markdown_path in folder.direct_markdown_files
@@ -146,6 +213,7 @@ def _update_managed_sections(
             existing_by_section_and_target,
             existing_entries,
             cross_folder_entries_by_name,
+            current_unmatched_file_counts_by_name,
             matched_entry_ids,
         )
         for markdown_path in folder.stub_markdown_files
@@ -156,6 +224,7 @@ def _update_managed_sections(
             child_folder,
             existing_by_section_and_target,
             cross_folder_folder_entries_by_name,
+            current_unmatched_folder_counts_by_name,
             matched_entry_ids,
         )
         for child_folder in folder.direct_subfolders
@@ -183,6 +252,96 @@ def _existing_entries_by_target(
     return result
 
 
+def _current_unmatched_file_counts_by_name(
+    folders: list[FolderInfo],
+    existing_entries_by_folder: dict[Path, list[IndexEntry]],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for folder in folders:
+        if folder.readme_path is None:
+            continue
+
+        existing_entries = existing_entries_by_folder.get(folder.path, [])
+        existing_by_section_and_target = _existing_entries_by_target(folder.readme_path, existing_entries)
+
+        for markdown_path in folder.direct_markdown_files:
+            if _has_stable_or_local_match(
+                folder.readme_path,
+                markdown_path,
+                False,
+                existing_entries,
+                existing_by_section_and_target,
+            ):
+                continue
+            counts[markdown_path.name] = counts.get(markdown_path.name, 0) + 1
+
+        for markdown_path in folder.stub_markdown_files:
+            if _has_stable_or_local_match(
+                folder.readme_path,
+                markdown_path,
+                True,
+                existing_entries,
+                existing_by_section_and_target,
+            ):
+                continue
+            counts[markdown_path.name] = counts.get(markdown_path.name, 0) + 1
+
+    return counts
+
+
+def _current_unmatched_folder_counts_by_name(
+    folders: list[FolderInfo],
+    existing_entries_by_folder: dict[Path, list[IndexEntry]],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for folder in folders:
+        if folder.readme_path is None:
+            continue
+        if folder.is_stubs:
+            continue
+
+        existing_entries = existing_entries_by_folder.get(folder.path, [])
+        existing_by_section_and_target = _existing_entries_by_target(folder.readme_path, existing_entries)
+        for child_folder in folder.direct_subfolders:
+            if _has_stable_or_local_folder_match(
+                folder.readme_path,
+                child_folder,
+                existing_entries,
+                existing_by_section_and_target,
+            ):
+                continue
+            counts[child_folder.name] = counts.get(child_folder.name, 0) + 1
+
+    return counts
+
+
+def _has_stable_or_local_match(
+    readme_path: Path,
+    markdown_path: Path,
+    is_stub: bool,
+    existing_entries: list[IndexEntry],
+    existing_by_section_and_target: dict[tuple[str, Path], IndexEntry],
+) -> bool:
+    section = "stubs" if is_stub else "files"
+    if existing_by_section_and_target.get((section, markdown_path.resolve(strict=False))) is not None:
+        return True
+    if not is_stub:
+        return _existing_stub_entry_for_direct_file(readme_path, markdown_path, existing_entries) is not None
+    return _existing_direct_entry_for_stub_file(readme_path, markdown_path, existing_entries) is not None
+
+
+def _has_stable_or_local_folder_match(
+    readme_path: Path,
+    child_folder: Path,
+    existing_entries: list[IndexEntry],
+    existing_by_section_and_target: dict[tuple[str, Path], IndexEntry],
+) -> bool:
+    target_path = (child_folder / "!README.md").resolve(strict=False)
+    if existing_by_section_and_target.get(("folders", target_path)) is not None:
+        return True
+    return _existing_folder_entry_for_child_folder(readme_path, child_folder, existing_entries) is not None
+
+
 def _render_file_line(
     readme_path: Path,
     markdown_path: Path,
@@ -190,6 +349,7 @@ def _render_file_line(
     existing_by_section_and_target: dict[tuple[str, Path], IndexEntry],
     existing_entries: list[IndexEntry],
     cross_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_file_counts_by_name: dict[str, int],
     matched_entry_ids: set[int],
 ) -> str:
     section = "stubs" if is_stub else "files"
@@ -221,7 +381,11 @@ def _render_file_line(
                 _ensure_stub_description(canonical_direct.description),
             )
 
-    moved_entry = _cross_folder_entry_for_file(markdown_path, cross_folder_entries_by_name)
+    moved_entry = _cross_folder_entry_for_file(
+        markdown_path,
+        cross_folder_entries_by_name,
+        current_unmatched_file_counts_by_name,
+    )
     if moved_entry is not None:
         matched_entry_ids.add(id(moved_entry))
         return render_file_entry(
@@ -242,6 +406,7 @@ def _render_folder_line(
     child_folder: Path,
     existing_by_section_and_target: dict[tuple[str, Path], IndexEntry],
     cross_folder_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_folder_counts_by_name: dict[str, int],
     matched_entry_ids: set[int],
 ) -> str:
     target_path = child_folder / "!README.md"
@@ -254,7 +419,11 @@ def _render_folder_line(
             existing.description,
         )
 
-    moved_entry = _cross_folder_entry_for_folder(child_folder, cross_folder_folder_entries_by_name)
+    moved_entry = _cross_folder_entry_for_folder(
+        child_folder,
+        cross_folder_folder_entries_by_name,
+        current_unmatched_folder_counts_by_name,
+    )
     if moved_entry is not None:
         matched_entry_ids.add(id(moved_entry))
         return render_folder_entry(
@@ -320,6 +489,21 @@ def _ensure_stub_description(description: str) -> str:
     return f"Stub: {description}"
 
 
+def _existing_folder_entry_for_child_folder(
+    readme_path: Path,
+    child_folder: Path,
+    existing_entries: list[IndexEntry],
+) -> IndexEntry | None:
+    expected_target = (child_folder / "!README.md").resolve(strict=False)
+    for entry in existing_entries:
+        if entry.section != "folders":
+            continue
+        if (readme_path.parent / entry.link_target).resolve(strict=False) != expected_target:
+            continue
+        return entry
+    return None
+
+
 def _cross_folder_entries_by_name(
     existing_entries_by_folder: dict[Path, list[IndexEntry]],
 ) -> dict[str, list[IndexEntry]]:
@@ -353,7 +537,10 @@ def _cross_folder_folder_entries_by_name(
 def _cross_folder_entry_for_file(
     markdown_path: Path,
     cross_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_file_counts_by_name: dict[str, int],
 ) -> IndexEntry | None:
+    if current_unmatched_file_counts_by_name.get(markdown_path.name, 0) != 1:
+        return None
     entries = cross_folder_entries_by_name.get(markdown_path.name)
     if entries is None or len(entries) != 1:
         return None
@@ -363,7 +550,10 @@ def _cross_folder_entry_for_file(
 def _cross_folder_entry_for_folder(
     child_folder: Path,
     cross_folder_folder_entries_by_name: dict[str, list[IndexEntry]],
+    current_unmatched_folder_counts_by_name: dict[str, int],
 ) -> IndexEntry | None:
+    if current_unmatched_folder_counts_by_name.get(child_folder.name, 0) != 1:
+        return None
     entries = cross_folder_folder_entries_by_name.get(child_folder.name)
     if entries is None or len(entries) != 1:
         return None
@@ -387,3 +577,12 @@ def _stale_entry_messages(
                 continue
             messages.append(f"Removed stale {entry.section} entry from {folder_path / '!README.md'}: {entry.original_line}")
     return messages
+
+
+def _parent_index_line_parts(line: str) -> tuple[str | None, str | None]:
+    import re
+
+    match = re.match(PARENT_INDEX_PATTERN, line)
+    if match is None:
+        return None, None
+    return match.group(1), match.group(2)

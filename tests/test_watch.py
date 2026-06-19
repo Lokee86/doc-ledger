@@ -158,5 +158,30 @@ def test_watch_root_once_reports_startup_and_summary(tmp_path: Path, monkeypatch
     assert watch_root(tmp_path, once=True) == 0
 
     output = capsys.readouterr().out
-    assert f"docs-index watch watching {tmp_path}" in output
-    assert "docs-index watch updated 3 file(s)" in output
+    assert f"doc-ledger watch watching {tmp_path}" in output
+    assert "doc-ledger watch updated 3 file(s)" in output
+
+
+def test_watch_root_runs_initial_fix_before_observer_start(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeObserver:
+        def schedule(self, *_args, **_kwargs) -> None:
+            calls.append("schedule")
+
+        def start(self) -> None:
+            calls.append("start")
+
+        def stop(self) -> None:
+            calls.append("stop")
+
+        def join(self) -> None:
+            calls.append("join")
+
+    monkeypatch.setattr("docs_index.watch._run_fix_and_report", lambda root: calls.append("fix") or 0)
+    monkeypatch.setattr("watchdog.observers.Observer", lambda: FakeObserver())
+    monkeypatch.setattr("docs_index.watch.time.sleep", lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    assert watch_root(tmp_path, once=False) == 0
+    assert calls[:3] == ["fix", "schedule", "start"]
+    assert calls[-2:] == ["stop", "join"]

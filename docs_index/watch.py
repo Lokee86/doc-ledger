@@ -54,10 +54,12 @@ class WatchScheduler:
 
 
 def watch_root(root: Path, debounce_seconds: float = 0.75, once: bool = False) -> int:
-    print(f"docs-index watch watching {root}")
+    print(f"doc-ledger watch watching {root}")
     if once:
         _run_fix_and_report(root)
         return 0
+
+    _run_fix_and_report(root)
 
     from watchdog.events import FileSystemEventHandler
     from watchdog.observers import Observer
@@ -87,9 +89,9 @@ def watch_root(root: Path, debounce_seconds: float = 0.75, once: bool = False) -
 def _run_fix_and_report(root: Path) -> int:
     result = reconcile_tree(root)
     changed = apply_updates(result)
-    print(f"docs-index watch updated {changed} file(s)")
+    print(f"doc-ledger watch updated {changed} file(s)")
     if result.messages:
-        print(f"docs-index watch reconciliation messages: {len(result.messages)}")
+        print(f"doc-ledger watch reconciliation messages: {len(result.messages)}")
     return changed
 
 
