@@ -54,12 +54,12 @@ Selection order:
 4. global user config
 5. built-in defaults
 
-There is no upward search and no merge between local and global config files.
+There is no upward parent-directory search and no merge between local and global config files.
 
 `--root` still overrides the selected base config root.
 
 `doc-ledger config show` prints the selected base config.
-`doc-ledger config paths` prints the current-directory and global config candidates.
+`doc-ledger config paths` prints the current-directory local config candidates and the global user config path.
 `doc-ledger config init --local` writes `.doc-ledger.toml` in the current directory.
 `doc-ledger config init --global` writes the global config file and creates parent directories as needed.
 

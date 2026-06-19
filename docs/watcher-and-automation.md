@@ -12,6 +12,7 @@ doc-ledger has a watch mode for long-running docs maintenance, but it is still a
 `doc-ledger watch --help` shows the watch-specific flags and examples.
 
 `--once` runs a single reconciliation pass and exits. Regular watch mode runs one reconciliation pass immediately, then keeps observing the docs tree recursively.
+Watch mode runs in the foreground by default. `doc-ledger` does not daemonize or own background lifecycle.
 
 ## What Watch Mode Does
 
@@ -36,34 +37,51 @@ Watch mode is useful while iterating locally, but it is not a replacement for `c
 - Use `check` before commit or in CI.
 - Expect `fix` to report `0` updated files when the watcher already reconciled the tree for you.
 
-## Example `processes.env`
+## Safer Detached Example
 
-If you run doc-ledger under a lightweight process manager, keep the command direct and let the wrapper handle the guard logic:
+If you run doc-ledger from a shell startup file, keep the launch explicit and let the wrapper handle the guard logic:
 
 ```bash
-export DOC_LEDGER_ROOT="${DOC_LEDGER_ROOT:-docs}"
+DOC_LEDGER_ROOT="${DOC_LEDGER_ROOT:-docs}"
 
-pid_file="$PWD/.cache/doc-ledger-watch.pid"
-log_file="$PWD/.cache/doc-ledger-watch.log"
+doc_ledger_pid_file="$PWD/.cache/doc-ledger-watch.pid"
+doc_ledger_log_file="$PWD/.cache/doc-ledger-watch.log"
 
-mkdir -p .cache
+mkdir -p "$PWD/.cache"
 
-start_doc_ledger_watch() {
-  nohup doc-ledger watch --root "$DOC_LEDGER_ROOT" > "$log_file" 2>&1 &
-  echo $! > "$pid_file"
+doc_ledger_watch_is_running() {
+  [ -s "$doc_ledger_pid_file" ] || return 1
+
+  local watcher_pid
+  watcher_pid="$(cat "$doc_ledger_pid_file" 2>/dev/null)" || return 1
+
+  case "$watcher_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+
+  kill -0 "$watcher_pid" 2>/dev/null || return 1
+  ps -p "$watcher_pid" -o args= 2>/dev/null | grep -Fq "doc-ledger watch"
 }
 
-if [ -s "$pid_file" ]; then
-  pid="$(cat "$pid_file")"
-  if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o args= | grep -q "doc-ledger watch"; then
-    :
-  else
-    start_doc_ledger_watch
-  fi
-else
+start_doc_ledger_watch() {
+  setsid bash -c '
+    cd "$1" || exit 1
+    exec doc-ledger watch --root "$2" </dev/null >>"$3" 2>&1
+  ' _ "$PWD" "$DOC_LEDGER_ROOT" "$doc_ledger_log_file" >/dev/null 2>&1 &
+
+  echo $! > "$doc_ledger_pid_file"
+}
+
+if ! doc_ledger_watch_is_running; then
+  rm -f "$doc_ledger_pid_file"
   start_doc_ledger_watch
 fi
+
+unset doc_ledger_pid_file
+unset doc_ledger_log_file
 ```
+
+When using `direnv`, source process startup files outside any `set -a` block so helper variables such as PID and log paths are not exported.
 
 This pattern keeps the process start explicit, writes logs to `.cache/doc-ledger-watch.log`, and avoids relying on shell aliases during startup.
 

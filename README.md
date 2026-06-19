@@ -33,6 +33,8 @@ doc-ledger check --root docs
 
 `check` verifies the same reconciliation without writing files.
 
+`doc-ledger` is intended to run as the installed command shown above. Until packaging is added, `python3 main.py` remains the repo-local development fallback.
+
 CLI help is available at the top level and for each subcommand:
 
 ```bash
@@ -114,7 +116,7 @@ Selection order:
 4. global user config
 5. built-in defaults
 
-There is no upward search and no merge between local and global config files.
+There is no upward parent-directory search and no merge between local and global config files.
 
 `--root` still overrides the selected base config root.
 
@@ -263,9 +265,18 @@ If a stale entry no longer maps to a current file or folder, `doc-ledger` remove
 doc-ledger.toml
 ```
 
-Discovery walks upward from the current directory. A nearer config wins over a farther config. In the same directory, `.doc-ledger.toml` wins over `doc-ledger.toml`.
+Selection order:
 
-`--config` overrides discovery.
+1. `--config PATH`
+2. current-directory `.doc-ledger.toml`
+3. current-directory `doc-ledger.toml`
+4. global user config
+5. built-in defaults
+
+Local config lookup is current-directory only.
+There is no upward parent-directory search.
+Local and global config files are not merged.
+CLI flags override the selected config.
 
 `--root` overrides the configured root.
 

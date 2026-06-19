@@ -15,7 +15,7 @@ python3 -m pytest tests
 The doc-ledger tests are split across small, focused areas:
 
 - CLI behavior
-- config loading and discovery
+- config loading and selection
 - scan model construction
 - README IO and managed section handling
 - parent index behavior
@@ -51,12 +51,7 @@ Useful knobs exposed by the script:
 - `MIN_TOPIC_FILES` and `MAX_TOPIC_FILES` control files in topic folders
 
 The default output directory is `dummy-docs/` in the current working directory.
-
-That output is not ignored by the repo’s `.gitignore`, so remove it when you are done:
-
-```bash
-rm -rf dummy-docs
-```
+The repo’s `.gitignore` already ignores that output directory.
 
 ## Manual Smoke Workflow
 
@@ -64,11 +59,11 @@ A simple end-to-end smoke test looks like this:
 
 ```bash
 ./docs/make-dummy-docs.sh
-python3 main.py fix --root dummy-docs
-python3 main.py check --root dummy-docs
+doc-ledger fix --root dummy-docs
+doc-ledger check --root dummy-docs
 ```
 
-After that, try a move or rename inside `dummy-docs/`, run `fix` and `check` again, and inspect the diff. That is a good way to verify description preservation, stale entry removal, and parent index updates on a realistic tree.
+If you are working from the repo checkout, `python3 main.py` can still be used as a development fallback. After that, try a move or rename inside `dummy-docs/`, run `fix` and `check` again, and inspect the diff. That is a good way to verify description preservation, stale entry removal, and parent index updates on a realistic tree.
 
 ## Fixture Guidance
 

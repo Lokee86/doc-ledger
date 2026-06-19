@@ -33,5 +33,5 @@ This `docs/` folder holds deeper operational and maintenance references for the 
 
 ## Notes
 
-- `docs/README.md` is the default docs-tree index.
+- `docs/README.md` is the default docs-tree index file.
 - doc-ledger keeps Python cache files out of commits through `.gitignore` and the repo hygiene test.
