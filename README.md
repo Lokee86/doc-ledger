@@ -1,5 +1,9 @@
 # doc-ledger
 
+## Motivation
+## Usage
+## Contributing
+
 `doc-ledger` keeps folder index files in sync with a file tree.
 
 Point it at a root folder, and it scans the folders and files inside it. For each folder, it creates or updates a local index file that lists the folder’s direct files, draft/stub files, and child folders. It can also add parent-index links so readers can move back up the tree.
@@ -43,7 +47,7 @@ doc-ledger --help
 doc-ledger --version
 ```
 
-## Quick start
+## Quick Start
 
 From the `doc-ledger` repo:
 
